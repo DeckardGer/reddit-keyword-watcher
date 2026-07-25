@@ -1,6 +1,22 @@
 import { env } from "./config";
 import type { MentionItem } from "./reddit";
 
+/** Carries the HTTP status so callers can distinguish throttling from errors. */
+export class HttpError extends Error {
+	constructor(
+		readonly status: number,
+		message: string,
+	) {
+		super(message);
+		this.name = "HttpError";
+	}
+}
+
+/** 429 = throttled, 403 = Reddit escalated repeat throttling into a block. */
+export function isThrottled(err: unknown): boolean {
+	return err instanceof HttpError && (err.status === 429 || err.status === 403);
+}
+
 function decodeEntities(s: string): string {
 	return s
 		.replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(Number.parseInt(h, 16)))
@@ -71,7 +87,7 @@ export async function fetchSubredditRss(subreddit: string): Promise<MentionItem[
 	const res = await fetch(`https://www.reddit.com/r/${subreddit}/new.rss`, {
 		headers: { "User-Agent": env.redditUserAgent },
 	});
-	if (!res.ok) throw new Error(`rss r/${subreddit}: HTTP ${res.status}`);
+	if (!res.ok) throw new HttpError(res.status, `rss r/${subreddit}: HTTP ${res.status}`);
 	return parseRedditAtom(await res.text());
 }
 
@@ -85,6 +101,7 @@ export async function fetchSearchRss(keyword: string): Promise<MentionItem[]> {
 	const res = await fetch(`https://www.reddit.com/search.rss?q=${q}&sort=new`, {
 		headers: { "User-Agent": env.redditUserAgent },
 	});
-	if (!res.ok) throw new Error(`rss search "${keyword}": HTTP ${res.status}`);
+	if (!res.ok)
+		throw new HttpError(res.status, `rss search "${keyword}": HTTP ${res.status}`);
 	return parseRedditAtom(await res.text());
 }

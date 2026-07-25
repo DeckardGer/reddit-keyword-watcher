@@ -3,7 +3,7 @@ import { searchHnSince } from "./hn";
 import { buildTopicGate, isRequestPost } from "./intent";
 import { buildMatcher, type Matcher } from "./match";
 import { type MentionItem, RedditPoller } from "./reddit";
-import { fetchSearchRss, fetchSubredditRss } from "./rss";
+import { fetchSearchRss, fetchSubredditRss, isThrottled } from "./rss";
 import { Store } from "./store";
 import { sendAlert, sendMessage } from "./telegram";
 import { triage } from "./triage";
@@ -11,10 +11,13 @@ import { triage } from "./triage";
 const REDDIT_COMMENTS_INTERVAL_MS = 5_000;
 const REDDIT_POSTS_INTERVAL_MS = 30_000;
 const INTENT_INTERVAL_MS = 60_000;
-// Measured 2026-07-25 from a datacenter IP: unauthenticated RSS allows only
-// ~1 request per 50-60s (10s spacing still 429s). So the RSS fallback is a
-// steady round-robin — one target per tick, never a burst.
-const RSS_TICK_INTERVAL_MS = 60_000;
+// Measured 2026-07-25 from a datacenter IP: unauthenticated RSS refills about
+// one request per 50-60s. A 60s tick rode exactly on that ceiling, tipped over
+// repeatedly, and Reddit escalated the 429s into 403 blocks — so tick slower
+// than the refill rate and cool off hard whenever throttled.
+const RSS_TICK_INTERVAL_MS = 90_000;
+const RSS_COOLDOWN_BASE_MS = 300_000;
+const RSS_COOLDOWN_MAX_MS = 3_600_000;
 const HN_INTERVAL_MS = 120_000;
 const HEARTBEAT_INTERVAL_MS = 300_000;
 const DAILY_SUMMARY_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -235,28 +238,40 @@ if (env.redditClientId && env.redditClientSecret) {
 		})),
 	];
 	let rssIndex = 0;
-	let rssConsecutiveFailures = 0;
+	let throttleStrikes = 0;
+	let cooldownUntil = 0;
+	const rotationMinutes = Math.round(
+		(rssTargets.length * RSS_TICK_INTERVAL_MS) / 60_000,
+	);
 	console.log(
-		`RSS round-robin: ${rssTargets.length} targets, 1/min — each refreshed every ~${rssTargets.length} min`,
+		`RSS round-robin: ${rssTargets.length} targets, 1 per ${RSS_TICK_INTERVAL_MS / 1000}s — each refreshed every ~${rotationMinutes} min`,
 	);
 	loops.push(
 		loop("reddit-rss", RSS_TICK_INTERVAL_MS, async () => {
+			if (Date.now() < cooldownUntil) return;
 			const target = rssTargets[rssIndex % rssTargets.length];
-			rssIndex++;
 			if (!target) return;
 			try {
 				await target.run();
-				rssConsecutiveFailures = 0;
+				rssIndex++;
+				throttleStrikes = 0;
 			} catch (err) {
-				rssConsecutiveFailures++;
-				console.error(`[reddit-rss] ${target.label}: ${String(err)}`);
-				// A whole rotation of failures means the IP is blocked, not just
-				// one unlucky request — surface it via the loop's backoff.
-				if (rssConsecutiveFailures >= rssTargets.length) {
-					rssConsecutiveFailures = 0;
-					throw new Error(
-						`${rssTargets.length} consecutive RSS failures — IP likely blocked by Reddit`,
+				if (isThrottled(err)) {
+					// Don't advance: retry this same target once the cooldown ends,
+					// so throttling never silently skips a subreddit for a whole
+					// rotation. Escalate the wait while Reddit keeps refusing.
+					throttleStrikes++;
+					const wait = Math.min(
+						RSS_COOLDOWN_BASE_MS * 2 ** (throttleStrikes - 1),
+						RSS_COOLDOWN_MAX_MS,
 					);
+					cooldownUntil = Date.now() + wait;
+					console.warn(
+						`[reddit-rss] ${target.label}: ${String(err)} — cooling down ${Math.round(wait / 60_000)}m`,
+					);
+				} else {
+					rssIndex++;
+					console.error(`[reddit-rss] ${target.label}: ${String(err)}`);
 				}
 			}
 		}),

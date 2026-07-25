@@ -19,15 +19,19 @@ UI, no dashboard, no productizing (a commercial version would require Reddit's
   NOTE: since Nov 2025 Reddit gates new API apps behind manual approval
   (Responsible Builder Policy) — creds may not be obtainable.
 - **Reddit (RSS fallback, no creds)**: when API creds are absent, a steady
-  round-robin makes **one request per minute** — rotating through each watched
+  round-robin makes **one request per 90s** — rotating through each watched
   sub's `new.rss` (intent mode) and a `search.rss` query per keyword (posts
-  only; Reddit search doesn't index comments). With 19 targets each is
-  refreshed about every 19 minutes. Measured 2026-07-25 from a datacenter IP:
-  unauthenticated RSS tolerates only ~1 request per 50-60s (even 10s spacing
-  returns 429), so bursts are counterproductive; single failures are logged and
-  skipped, and a full rotation of failures raises an error so a blocked IP is
-  visible rather than silent. Comment coverage requires the API (or F5Bot
-  alongside).
+  only; Reddit search doesn't index comments). With 17 targets each is
+  refreshed about every 25 minutes.
+
+  Measured 2026-07-25 from a datacenter IP: unauthenticated RSS refills roughly
+  one request per 50-60s. A 60s tick sat exactly on that ceiling, tipped over,
+  and Reddit escalated the resulting 429s into 403 blocks — so the tick is
+  deliberately slower than the refill rate. On a 429/403 the loop enters an
+  escalating cooldown (5m, 10m, 20m … capped at 1h) and does **not** advance
+  the rotation, so a throttled subreddit is retried rather than skipped for a
+  full cycle. Other errors just log and move on. Comment coverage requires the
+  API (or F5Bot alongside).
 - **Hacker News**: polls the official free Algolia API
   (`hn.algolia.com/api/v1/search_by_date`) per keyword every 2 minutes with a
   persisted cursor. Fully sanctioned, no auth.
