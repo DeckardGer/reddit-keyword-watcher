@@ -25,6 +25,22 @@ export class Store {
 		return res.changes > 0;
 	}
 
+	/**
+	 * True once a target's first fetch has been absorbed. The first fetch of
+	 * any feed returns a backlog of already-existing items; alerting on those
+	 * would bombard the user every time a new sub or keyword is added.
+	 */
+	isPrimed(target: string): boolean {
+		const row = this.db
+			.query("SELECT value FROM cursors WHERE key = ?")
+			.get(`primed:${target}`) as { value: number } | null;
+		return row !== null;
+	}
+
+	setPrimed(target: string): void {
+		this.setCursor(`primed:${target}`, 1);
+	}
+
 	getCursor(key: string, fallback: number): number {
 		const row = this.db
 			.query("SELECT value FROM cursors WHERE key = ?")

@@ -40,7 +40,9 @@ export const products: Product[] = [
 			"organize saved posts",
 		],
 		watchedSubreddits: [
-			{ name: "PKMS", mode: "request" },
+			// PKMS is on-topic as a venue but most of its questions are
+			// note-taking methodology, so gate it on topic words too.
+			{ name: "PKMS", mode: "request+topic" },
 			{ name: "chrome_extensions", mode: "request" },
 			{ name: "productivity", mode: "request+topic" },
 			{ name: "ObsidianMD", mode: "request+topic" },
@@ -62,6 +64,12 @@ export const products: Product[] = [
 			"links",
 			"read later",
 			"saved posts",
+			"download",
+			"article",
+			"articles",
+			"collection",
+			"screenshot",
+			"screenshots",
 		],
 		enabled: true,
 	},

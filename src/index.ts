@@ -66,6 +66,21 @@ async function handleItems(items: MentionItem[]): Promise<void> {
 	}
 }
 
+/**
+ * Absorbs a target's first fetch without alerting: marks every item seen so
+ * only genuinely new activity pages the user from here on.
+ */
+function primeTarget(target: string, items: MentionItem[]): void {
+	for (const item of items) {
+		for (const product of active) {
+			store.markSeen(`${product.name}:${item.source}:${item.id}`);
+		}
+	}
+	store.setPrimed(target);
+	store.bumpStats(items.length, 0, 0);
+	console.log(`[prime] ${target}: absorbed ${items.length} existing items`);
+}
+
 async function handleIntentItems(items: MentionItem[]): Promise<void> {
 	store.bumpStats(items.length, 0, 0);
 	for (const item of items) {
@@ -75,7 +90,7 @@ async function handleIntentItems(items: MentionItem[]): Promise<void> {
 				(w) => `r/${w.name}`.toLowerCase() === item.community.toLowerCase(),
 			);
 			if (!watch) continue;
-			if (!isRequestPost(item.title, item.text)) continue;
+			if (!isRequestPost(item.title)) continue;
 			if (watch.mode === "request+topic" && !topicGate(item.text)) continue;
 			// Shared dedup key with the keyword stream: one alert per item per product.
 			if (!store.markSeen(`${product.name}:${item.source}:${item.id}`)) continue;
@@ -123,8 +138,14 @@ async function pollHn(): Promise<void> {
 		);
 		const items = await searchHnSince(keyword, since);
 		if (items.length > 0) {
-			await handleItems(items);
+			if (store.isPrimed(cursorKey)) {
+				await handleItems(items);
+			} else {
+				primeTarget(cursorKey, items);
+			}
 			store.setCursor(cursorKey, Math.max(...items.map((i) => i.createdUtc)));
+		} else {
+			store.setPrimed(cursorKey);
 		}
 	}
 }
@@ -186,11 +207,20 @@ if (env.redditClientId && env.redditClientSecret) {
 	const rssTargets: { label: string; run: () => Promise<void> }[] = [
 		...watchedSubs.map((sub) => ({
 			label: `r/${sub}`,
-			run: async () => handleIntentItems(await fetchSubredditRss(sub)),
+			run: async () => {
+				const items = await fetchSubredditRss(sub);
+				if (!store.isPrimed(`r/${sub}`)) return primeTarget(`r/${sub}`, items);
+				await handleIntentItems(items);
+			},
 		})),
 		...hnKeywords.map((keyword) => ({
 			label: `search:${keyword}`,
-			run: async () => handleItems(await fetchSearchRss(keyword)),
+			run: async () => {
+				const items = await fetchSearchRss(keyword);
+				const key = `search:${keyword}`;
+				if (!store.isPrimed(key)) return primeTarget(key, items);
+				await handleItems(items);
+			},
 		})),
 	];
 	let rssIndex = 0;

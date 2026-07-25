@@ -17,6 +17,8 @@ const REQUEST_PATTERNS: RegExp[] = [
 	/\bwhat (?:app|tool|extension|service)s? (?:do you|does everyone|should i)\b/i,
 	/\bwhat do you (?:use|all use)\b/i,
 	/\bhow do (?:i|you)\b/i,
+	/\bhow to\b/i,
+	/\bhow can i\b/i,
 	/\blooking for (?:a|an|some|something)\b/i,
 	/\brecommend(?:ation)?s?\b/i,
 	/\bbest way to\b/i,
@@ -25,11 +27,14 @@ const REQUEST_PATTERNS: RegExp[] = [
 	/\bsuggest(?:ion)?s?\b/i,
 ];
 
-/** Detects request-shaped posts ("is there a tool that…", "how do I…"). */
-export function isRequestPost(title: string, body: string): boolean {
+/**
+ * Detects request-shaped posts ("is there a tool that…", "how do I…").
+ * Title-only by design: bodies of long show-off posts routinely contain
+ * request phrasing in passing, which made body matching far too noisy.
+ */
+export function isRequestPost(title: string): boolean {
 	if (title.trimEnd().endsWith("?")) return true;
-	const text = `${title}\n${body}`;
-	return REQUEST_PATTERNS.some((re) => re.test(text));
+	return REQUEST_PATTERNS.some((re) => re.test(title));
 }
 
 /** Builds a topic gate from word-boundary-matched topic words. */
