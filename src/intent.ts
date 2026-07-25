@@ -29,12 +29,17 @@ const REQUEST_PATTERNS: RegExp[] = [
 
 /**
  * Detects request-shaped posts ("is there a tool that…", "how do I…").
- * Title-only by design: bodies of long show-off posts routinely contain
- * request phrasing in passing, which made body matching far too noisy.
+ *
+ * `includeBody` trades precision for recall and should track whether LLM
+ * triage is enabled: bodies of long show-off posts routinely contain request
+ * phrasing in passing (noisy on its own), but that noise is exactly what
+ * triage filters — and scanning bodies catches statement-form posts whose
+ * title never looks like a question ("Drowning in saved content").
  */
-export function isRequestPost(title: string): boolean {
+export function isRequestPost(title: string, body = "", includeBody = false): boolean {
 	if (title.trimEnd().endsWith("?")) return true;
-	return REQUEST_PATTERNS.some((re) => re.test(title));
+	const text = includeBody ? `${title}\n${body}` : title;
+	return REQUEST_PATTERNS.some((re) => re.test(text));
 }
 
 /** Builds a topic gate from word-boundary-matched topic words. */

@@ -32,12 +32,22 @@ UI, no dashboard, no productizing (a commercial version would require Reddit's
   (`hn.algolia.com/api/v1/search_by_date`) per keyword every 2 minutes with a
   persisted cursor. Fully sanctioned, no auth.
 - **Matching**: word-boundary, case-insensitive, per product (`src/config.ts`).
-- **Intent mode**: for `watchedSubreddits` (one extra multireddit request/min),
-  every NEW POST is screened for request shape ("is there a tool…", "how do
-  I…", title ending in "?") with no keyword requirement — `request` mode alerts
-  on any request-shaped post (niche subs), `request+topic` also requires one of
-  the product's `topicWords` (broad subs). Intent alerts are prefixed 🎯,
-  keyword alerts 🔔; both share dedup so an item alerts at most once.
+- **Intent mode**: for `watchedSubreddits`, every NEW POST is screened for
+  request shape ("is there a tool…", "how do I…", title ending in "?") with no
+  keyword requirement — `request` mode alerts on any request-shaped post
+  (niche subs), `request+topic` also requires one of the product's
+  `topicWords` (broad subs). Intent alerts are prefixed 🎯, keyword alerts 🔔;
+  both share dedup so an item alerts at most once.
+- **The heuristics adapt to triage.** Without `OPENAI_API_KEY` they are the
+  only filter, so they run strict: request phrasing must appear in the title,
+  and `request+topic` subs must hit a topic word. With triage enabled they
+  widen — bodies are scanned (catching statement-form posts like "Drowning in
+  saved content") and the topic gate defers to the model, since precision is
+  now the LLM's job and dropping threads on vocabulary costs more than it
+  saves. The startup log states which mode is active.
+- **Cold-start priming**: the first fetch of any target absorbs the existing
+  backlog into the dedup store without alerting, so adding a subreddit or
+  keyword never floods you.
 - **Triage** (optional): each hit goes through one cheap LLM call that answers
   "would the founder actually want to read this?" — kills coincidental matches
   like "raindrop" the weather. Fails open if the API errors.

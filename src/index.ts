@@ -21,6 +21,9 @@ const DAILY_SUMMARY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const SEEN_RETENTION_DAYS = 14;
 const MAX_BACKOFF_MULTIPLIER = 60;
 
+// Heuristics tighten when they're the last line of defense and loosen when
+// LLM triage is behind them to catch the false positives.
+const triageEnabled = Boolean(env.openaiApiKey);
 const active = products.filter((p) => p.enabled);
 if (active.length === 0) {
 	console.error("no enabled products in config.ts; nothing to do");
@@ -90,8 +93,11 @@ async function handleIntentItems(items: MentionItem[]): Promise<void> {
 				(w) => `r/${w.name}`.toLowerCase() === item.community.toLowerCase(),
 			);
 			if (!watch) continue;
-			if (!isRequestPost(item.title)) continue;
-			if (watch.mode === "request+topic" && !topicGate(item.text)) continue;
+			if (!isRequestPost(item.title, item.text, triageEnabled)) continue;
+			// The topic gate is a cheap stand-in for judgment; with triage on,
+			// let the model judge instead of dropping threads on vocabulary.
+			if (watch.mode === "request+topic" && !triageEnabled && !topicGate(item.text))
+				continue;
 			// Shared dedup key with the keyword stream: one alert per item per product.
 			if (!store.markSeen(`${product.name}:${item.source}:${item.id}`)) continue;
 			store.bumpStats(0, 1, 0);
@@ -174,7 +180,12 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 console.log(
-	`RedditKeywordWatcher watching ${active.map((p) => p.name).join(", ")} — ${hnKeywords.length} keywords (reddit ${env.redditClientId ? "on" : "OFF: no creds"}, triage ${env.openaiApiKey ? "on" : "off"}, telegram ${env.telegramBotToken ? "on" : "off"})`,
+	`RedditKeywordWatcher watching ${active.map((p) => p.name).join(", ")} — ${hnKeywords.length} keywords (reddit ${env.redditClientId ? "on" : "OFF: no creds"}, triage ${triageEnabled ? "on" : "off"}, telegram ${env.telegramBotToken ? "on" : "off"})`,
+);
+console.log(
+	triageEnabled
+		? "intent: wide net (body scanned, topic gate deferred to triage)"
+		: "intent: strict (title-only, topic gate enforced) — set OPENAI_API_KEY to widen",
 );
 
 const loops: Promise<never>[] = [

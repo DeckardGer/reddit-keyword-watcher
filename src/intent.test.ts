@@ -18,9 +18,16 @@ describe("isRequestPost", () => {
 		expect(isRequestPost("My 2026 setup tour")).toBe(false);
 	});
 
-	test("ignores request phrasing that only appears in a body", () => {
-		// Title-only by design: show-off posts often muse "how do I..." mid-body.
-		expect(isRequestPost("I built a personal knowledge system for things")).toBe(false);
+	test("ignores body phrasing by default (strict mode, no triage)", () => {
+		expect(
+			isRequestPost("I built a personal knowledge system", "how do I make it better"),
+		).toBe(false);
+	});
+
+	test("scans body when widened (triage enabled)", () => {
+		expect(
+			isRequestPost("Drowning in saved content", "any app that can help me sort this out", true),
+		).toBe(true);
 	});
 });
 
