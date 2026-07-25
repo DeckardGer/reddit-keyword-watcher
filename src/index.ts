@@ -11,10 +11,10 @@ import { triage } from "./triage";
 const REDDIT_COMMENTS_INTERVAL_MS = 5_000;
 const REDDIT_POSTS_INTERVAL_MS = 30_000;
 const INTENT_INTERVAL_MS = 60_000;
-// Unauthenticated RSS is aggressively rate limited: one request at a time,
-// seconds apart, minutes between full cycles (~2/min average all-in).
-const RSS_CYCLE_INTERVAL_MS = 600_000;
-const RSS_REQUEST_GAP_MS = 5_000;
+// Measured 2026-07-25 from a datacenter IP: unauthenticated RSS allows only
+// ~1 request per 50-60s (10s spacing still 429s). So the RSS fallback is a
+// steady round-robin — one target per tick, never a burst.
+const RSS_TICK_INTERVAL_MS = 60_000;
 const HN_INTERVAL_MS = 120_000;
 const HEARTBEAT_INTERVAL_MS = 300_000;
 const DAILY_SUMMARY_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -181,15 +181,42 @@ if (env.redditClientId && env.redditClientSecret) {
 	console.warn(
 		"no Reddit API creds — RSS fallback active: intent via sub feeds, keywords via search RSS (posts only, no comments)",
 	);
+	// One target per tick, round-robin. Subs first so intent detection (the
+	// higher-signal stream) leads on a cold start.
+	const rssTargets: { label: string; run: () => Promise<void> }[] = [
+		...watchedSubs.map((sub) => ({
+			label: `r/${sub}`,
+			run: async () => handleIntentItems(await fetchSubredditRss(sub)),
+		})),
+		...hnKeywords.map((keyword) => ({
+			label: `search:${keyword}`,
+			run: async () => handleItems(await fetchSearchRss(keyword)),
+		})),
+	];
+	let rssIndex = 0;
+	let rssConsecutiveFailures = 0;
+	console.log(
+		`RSS round-robin: ${rssTargets.length} targets, 1/min — each refreshed every ~${rssTargets.length} min`,
+	);
 	loops.push(
-		loop("reddit-rss", RSS_CYCLE_INTERVAL_MS, async () => {
-			for (const sub of watchedSubs) {
-				await handleIntentItems(await fetchSubredditRss(sub));
-				await Bun.sleep(RSS_REQUEST_GAP_MS);
-			}
-			for (const keyword of hnKeywords) {
-				await handleItems(await fetchSearchRss(keyword));
-				await Bun.sleep(RSS_REQUEST_GAP_MS);
+		loop("reddit-rss", RSS_TICK_INTERVAL_MS, async () => {
+			const target = rssTargets[rssIndex % rssTargets.length];
+			rssIndex++;
+			if (!target) return;
+			try {
+				await target.run();
+				rssConsecutiveFailures = 0;
+			} catch (err) {
+				rssConsecutiveFailures++;
+				console.error(`[reddit-rss] ${target.label}: ${String(err)}`);
+				// A whole rotation of failures means the IP is blocked, not just
+				// one unlucky request — surface it via the loop's backoff.
+				if (rssConsecutiveFailures >= rssTargets.length) {
+					rssConsecutiveFailures = 0;
+					throw new Error(
+						`${rssTargets.length} consecutive RSS failures — IP likely blocked by Reddit`,
+					);
+				}
 			}
 		}),
 	);
